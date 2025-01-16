@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+"fmt"
 	"os"
 	"sort"
 	"strconv"
@@ -28,6 +28,17 @@ type model struct {
 var (
 	progressBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
 )
+var (
+	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
+	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
+	docStyle          = lipgloss.NewStyle()
+	highlightColor    = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
+	inactiveTabStyle  = lipgloss.NewStyle().Border(inactiveTabBorder, true).BorderForeground(highlightColor).Padding(0, 1)
+	activeTabStyle    = inactiveTabStyle.Border(activeTabBorder, true)
+	windowStyle       = lipgloss.NewStyle().BorderForeground(highlightColor).Padding(2, 0).Align(lipgloss.Left).Border(lipgloss.NormalBorder()).UnsetBorderTop()
+)
+
+
 
 func (m model) Init() tea.Cmd {
 	// Create a background task that periodically fetches both CPU and memory info
@@ -72,11 +83,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.activeTab = max(m.activeTab-1, 0)
 			return m, nil
     case "k", "up":
-      m.table.MoveUp(1)
-      return m, nil
+      if m.activeTab == 0 {
+        m.table.MoveUp(1)
+        return m, nil
+      }
     case "j", "down":
-      m.table.MoveDown(1)
-      return m, nil
+      if m.activeTab == 0 {
+        m.table.MoveDown(1)
+       return m, nil
+      }
 		}
 	case *cpu.CPUINFO:
     m.TabContent[0] = fmt.Sprintf(
@@ -106,8 +121,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	return m, nil
 }
-
-
 func (m *model) updateCpuTable(cpuInfo *cpu.CPUINFO) {
 	rows := make([]table.Row, 0, len(cpuInfo.TimePerThread))
 	sortedThreads := make([]string, 0, len(cpuInfo.TimePerThread))
@@ -129,7 +142,7 @@ func (m *model) updateCpuTable(cpuInfo *cpu.CPUINFO) {
 
 func (m *model) updateMemoryContent(memInfo *memory.MemInfo) {
 	m.TabContent[1] = fmt.Sprintf(
-		"Total: %f\nUsed: %f\nAvailable: %f\nSwap Total: %f\nSwap Used: %f\n\n%s\n%s\n%s\n",
+		"Total: %.3fGB\nUsed: %.3fGB\nAvailable: %.3fGB\nSwap Total: %.3fGB\nSwap Used: %.3fGB\n\n%s\n%s\n%s\n",
 		(memInfo.TotalMemory),
 		(memInfo.UsedMemory),
 		(memInfo.FreeMemory),
@@ -142,39 +155,11 @@ func (m *model) updateMemoryContent(memInfo *memory.MemInfo) {
 }
 
 
-func renderBar(value, total float64, label string) string {
-	percentage := float64(value) / float64(total)
-  x := len("Available Memory:") - len(label)
-  for x>0 {
-    label += " "
-    x--
-  }
-	bar := progressBarStyle.Render(strings.Repeat("█", int(percentage*20)) + strings.Repeat("░", 20-int(percentage*20)))
-	return fmt.Sprintf("%s\t[%s] %.2f%%\n", label, bar, percentage*100)
-}
-func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
-	border := lipgloss.RoundedBorder()
-	border.BottomLeft = left
-	border.Bottom = middle
-	border.BottomRight = right
-	return border
-}
-
-var (
-	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
-	activeTabBorder   = tabBorderWithBottom("┘", " ", "└")
-	docStyle          = lipgloss.NewStyle()
-	highlightColor    = lipgloss.AdaptiveColor{Light: "#874BFD", Dark: "#7D56F4"}
-	inactiveTabStyle  = lipgloss.NewStyle().Border(inactiveTabBorder, true).BorderForeground(highlightColor).Padding(0, 1)
-	activeTabStyle    = inactiveTabStyle.Border(activeTabBorder, true)
-	windowStyle       = lipgloss.NewStyle().BorderForeground(highlightColor).Padding(2, 0).Align(lipgloss.Left).Border(lipgloss.NormalBorder()).UnsetBorderTop()
-)
-
 func (m model) View() string {
 	doc := strings.Builder{}
 
+	// Render the tabs
 	var renderedTabs []string
-
 	for i, t := range m.Tabs {
 		var style lipgloss.Style
 		isFirst, isLast, isActive := i == 0, i == len(m.Tabs)-1, i == m.activeTab
@@ -196,44 +181,26 @@ func (m model) View() string {
 		style = style.Border(border)
 		renderedTabs = append(renderedTabs, style.Render(t))
 	}
-
 	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 	doc.WriteString(row)
 	doc.WriteString("\n")
-
-	// Show table only in the CPU tab
+	activeTabContentStyle := lipgloss.NewStyle().
+		Foreground(lipgloss.Color("#3E7B27")).Align(lipgloss.Left).Bold(true)
 	if m.activeTab == 0 {
-		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).Render(m.TabContent[m.activeTab],"\n\n",m.table.View()))
+		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).
+			Render(
+				activeTabContentStyle.Render(m.TabContent[m.activeTab]) + "\n\n" + m.table.View(),
+			))
 		doc.WriteString("\n")
 	} else {
-		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).Render(m.TabContent[m.activeTab]))
+		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).
+			Render(activeTabContentStyle.Render(m.TabContent[m.activeTab])))
 	}
 	return docStyle.Render(doc.String())
 }
 
 
-func SortThreads(keys []string) []string {
-	sort.Slice(keys, func(i, j int) bool {
-		// Extract numeric part from the keys
-		num1 := extractNumericSuffix(keys[i])
-		num2 := extractNumericSuffix(keys[j])
 
-		return num1 < num2
-	})
-	return keys
-}
-
-func extractNumericSuffix(key string) int {
-	// Find the numeric part of the key
-	for i := len(key) - 1; i >= 0; i-- {
-		if key[i] < '0' || key[i] > '9' {
-			// Convert the numeric suffix to an integer
-			num, _ := strconv.Atoi(key[i+1:])
-			return num
-		}
-	}
-	return 0 // Default value if no numeric suffix found
-}
 func main() {
 	columns := []table.Column{
 		{Title: "Thread ID", Width: 20},
@@ -244,7 +211,7 @@ func main() {
   styles := table.DefaultStyles()
   styles.Header = lipgloss.NewStyle().Align(lipgloss.Center)
   styles.Cell = lipgloss.NewStyle().Align(lipgloss.Center)
-  styles.Selected = lipgloss.NewStyle().Background(lipgloss.Color("#3D3D3D")).Bold(true).Align(lipgloss.Center).Foreground(lipgloss.Color("#FFFAEC"))
+  styles.Selected = lipgloss.NewStyle().Background(lipgloss.Color("#123524")).Bold(true).Align(lipgloss.Center).Foreground(lipgloss.Color("#EFE3C2"))
   t := table.New(
     table.WithColumns(columns),
     table.WithFocused(true), // Ensure focus is disabled
@@ -274,3 +241,44 @@ func main() {
 	}
 }
 
+
+func renderBar(value, total float64, label string) string {
+	percentage := float64(value) / float64(total)
+  x := len("Available Memory:") - len(label)
+  for x>0 {
+    label += " "
+    x--
+  }
+	bar := progressBarStyle.Render(strings.Repeat("█", int(percentage*20)) + strings.Repeat("░", 20-int(percentage*20)))
+	return fmt.Sprintf("%s\t[%s] %.2f%%\n", label, bar, percentage*100)
+}
+func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
+	border := lipgloss.RoundedBorder()
+	border.BottomLeft = left
+	border.Bottom = middle
+	border.BottomRight = right
+	return border
+}
+
+func extractNumericSuffix(key string) int {
+	// Find the numeric part of the key
+	for i := len(key) - 1; i >= 0; i-- {
+		if key[i] < '0' || key[i] > '9' {
+			// Convert the numeric suffix to an integer
+			num, _ := strconv.Atoi(key[i+1:])
+			return num
+		}
+	}
+	return 0 // Default value if no numeric suffix found
+}
+
+func SortThreads(keys []string) []string {
+	sort.Slice(keys, func(i, j int) bool {
+		// Extract numeric part from the keys
+		num1 := extractNumericSuffix(keys[i])
+		num2 := extractNumericSuffix(keys[j])
+
+		return num1 < num2
+	})
+	return keys
+}
