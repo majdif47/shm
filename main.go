@@ -71,6 +71,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "shift+tab":
 			m.activeTab = max(m.activeTab-1, 0)
 			return m, nil
+    case "k", "up":
+      m.table.MoveUp(1)
+      return m, nil
+    case "j", "down":
+      m.table.MoveDown(1)
+      return m, nil
 		}
 	case *cpu.CPUINFO:
     m.TabContent[0] = fmt.Sprintf(
@@ -234,15 +240,17 @@ func main() {
 		{Title: "Usage (%)", Width: 20},
 		{Title: "Time (ms)", Width: 50},
 	}
+
   styles := table.DefaultStyles()
-  styles.Cell = lipgloss.NewStyle().Foreground(lipgloss.Color("#FEF9E1")).Bold(true).Align(lipgloss.Center)
   styles.Header = lipgloss.NewStyle().Align(lipgloss.Center)
+  styles.Cell = lipgloss.NewStyle().Align(lipgloss.Center)
+  styles.Selected = lipgloss.NewStyle().Background(lipgloss.Color("#3D3D3D")).Bold(true).Align(lipgloss.Center).Foreground(lipgloss.Color("#FFFAEC"))
   t := table.New(
     table.WithColumns(columns),
-    table.WithFocused(false), // Ensure focus is disabled
+    table.WithFocused(true), // Ensure focus is disabled
     table.WithStyles(styles),// Apply the updated styles
   )
-	tabs := []string{"CPU\t", "Memory\t", "Running Tasks\t", "Disks\t", "Networks\t", "GPU\t", "General Info\t", "Power\t"}
+	tabs := []string{"CPU", "Memory", "Running Tasks", "Disks", "Networks", "GPU", "General Info", "Power"}
 	tabContent := []string{
 		"Loading CPU info...",
 		"Memory metrics...",
