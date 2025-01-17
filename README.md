@@ -1,8 +1,9 @@
 # ⚡️ SHM: System Hardware Monitor ⚡️
 
-**Introduction**
-
 🚀 SHM (System Hardware Monitor) is a user-friendly, command-line tool designed to monitor system metrics on Linux machines. It utilizes a simple library: `sysmetricslib` library ([https://github.com/majdif47/sysmetricslib](https://github.com/majdif47/sysmetricslib)) to provide real-time insights into your system's performance. 
+
+![shm](https://github.com/majdif47/shm/blob/main/250117_20h20m22s_screenshot.png)
+
 
 **Features**
 
