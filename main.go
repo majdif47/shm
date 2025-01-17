@@ -1,32 +1,40 @@
 package main
 
 import (
-"fmt"
+	"fmt"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
-  "time"
+	"time"
+
 	"github.com/charmbracelet/bubbles/table"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/majdif47/sysmetricslib/cpu"
+	"github.com/majdif47/sysmetricslib/disks"
 	"github.com/majdif47/sysmetricslib/memory"
-
+	"github.com/majdif47/sysmetricslib/networks"
+	
 )
 
 type model struct {
 	Tabs       []string
 	TabContent []string
 	activeTab  int
-  table       table.Model 
+  CPUtable    table.Model 
+  NetTabel    table.Model
   cpuInfo    *cpu.CPUINFO
   memInfo     *memory.MemInfo
+  disksInfo   *disks.DiskStats
+  networkStats []networks.NetInfo
+  width        int
+  height       int
 }
 
 
 var (
-	progressBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00FF00"))
+	progressBarStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("#00ADB5")).Bold(true)
 )
 var (
 	inactiveTabBorder = tabBorderWithBottom("┴", "─", "┴")
@@ -55,10 +63,24 @@ func (m model) Init() tea.Cmd {
         return fmt.Sprintf("Error: %v", err)
       }
       return memInfo
+    } else if m.activeTab== 2 {
+      disksInfo, err := disks.GetDiskUsage()
+      if err != nil {
+        return fmt.Sprintf("Error: %v", err)
+      }
+      return disksInfo
+    } else if m.activeTab == 3 {
+        networkStats, err := networks.GetNetworkInterfaces()
+        if err != nil {
+          return fmt.Sprintf("Error: %v", err)
+        }
+        return networkStats
     }
     return nil
 	})
 }
+
+
 
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -76,7 +98,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return fmt.Sprintf("Error: %v", err)
 					}
 					return memInfo
-				}
+				}else if m.activeTab == 2 {
+	    		disksInfo, err := disks.GetDiskUsage()
+			    if err != nil {
+				  return fmt.Sprintf("Error: %v", err)
+			  }
+			  return disksInfo
+        }else if m.activeTab == 3 {
+          netStats, err := networks.GetNetworkInterfaces()
+          if err != nil {
+            return fmt.Sprintf("Error: %v", err)
+          }
+          return netStats
+        }
 				return nil
 			})
 		case "shift+tab":
@@ -84,13 +118,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
     case "k", "up":
       if m.activeTab == 0 {
-        m.table.MoveUp(1)
+        m.CPUtable.MoveUp(1)
         return m, nil
+      }else if m.activeTab == 3{
+        m.NetTabel.MoveUp(1)
+        return m,nil
       }
     case "j", "down":
       if m.activeTab == 0 {
-        m.table.MoveDown(1)
+        m.CPUtable.MoveDown(1)
        return m, nil
+      } else if m.activeTab == 3 {
+        m.NetTabel.MoveDown(1)
+        return m, nil
       }
 		}
 	case *cpu.CPUINFO:
@@ -117,6 +157,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return memInfo
 		})
+  case *disks.DiskStats:
+    m.disksInfo = msg
+    m.updateDiskContent(msg)
+    return m,tea.Tick(time.Second, func(t time.Time) tea.Msg {
+			disksInfo, err := disks.GetDiskUsage()
+			if err != nil {
+				return fmt.Sprintf("Error: %v", err)
+			}
+			return disksInfo
+		})
+  case []networks.NetInfo:
+    m.TabContent[3] = fmt.Sprintf("Network Stats: \n")
+    m.networkStats = msg
+    m.updateNetworkTable(msg)
+    return m, tea.Tick(time.Second, func(t time.Time) tea.Msg {
+      netInfo, err := networks.GetNetworkInterfaces()
+      if err != nil {
+        return fmt.Sprintf("Error: %v", err)
+      }
+      return netInfo
+    })
+  case tea.WindowSizeMsg:
+    m.height = msg.Height
+    m.width = msg.Width
+    return m, nil
 	}
 
 	return m, nil
@@ -136,7 +201,7 @@ func (m *model) updateCpuTable(cpuInfo *cpu.CPUINFO) {
 			fmt.Sprintf("User: %d, System: %d, Idle: %d", data.User, data.System, data.Idle),
 		})
 	}
-	m.table.SetRows(rows)
+	m.CPUtable.SetRows(rows)
 }
 
 
@@ -154,10 +219,45 @@ func (m *model) updateMemoryContent(memInfo *memory.MemInfo) {
 	)
 }
 
+func (m *model) updateDiskContent(diskInfo *disks.DiskStats) {
+	m.TabContent[2] = fmt.Sprintf(
+		"Total: %.3fGB\nUsed: %.3fGB\nAvailable: %.3fGB\n\n%s\n%s\n",
+		float64(diskInfo.Total)/1e9,
+		float64(diskInfo.Used)/1e9,
+		float64(diskInfo.Free)/1e9,
+    renderBar(float64(diskInfo.Used), float64(diskInfo.Total), "Disk Usage:"),
+    renderBar(float64(diskInfo.Free), float64(diskInfo.Total), "Free Space:"),
+	)
+}
+
+
+func (m *model) updateNetworkTable(netInfo []networks.NetInfo) {
+  rows := make([]table.Row, 0, len(netInfo))
+  for i := range netInfo {
+    data := netInfo[i]
+    rows = append(rows, table.Row{
+      data.Name,
+      data.State,
+      fmt.Sprintf("%d",data.Speed),
+      fmt.Sprintf("%d",data.RxBytes),
+      fmt.Sprintf("%d",data.TxBytes),
+      fmt.Sprintf("%d",data.RxErrors),
+      fmt.Sprintf("%d",data.TxErrors),
+    })
+  }
+  m.NetTabel.SetRows(rows)
+}
 
 func (m model) View() string {
 	doc := strings.Builder{}
-
+  tabWidth := m.width/len(m.Tabs)
+  for i := 0 ; i < len(m.Tabs); i++ {
+    tabWidth -= len(m.Tabs[i])
+  }
+  whiteSpace := ""
+  for i := 0 ; i <= tabWidth ; i++ {
+    whiteSpace += " "
+  }
 	// Render the tabs
 	var renderedTabs []string
 	for i, t := range m.Tabs {
@@ -179,20 +279,28 @@ func (m model) View() string {
 			border.BottomRight = "┤"
 		}
 		style = style.Border(border)
+    t += whiteSpace
 		renderedTabs = append(renderedTabs, style.Render(t))
 	}
 	row := lipgloss.JoinHorizontal(lipgloss.Top, renderedTabs...)
 	doc.WriteString(row)
 	doc.WriteString("\n")
 	activeTabContentStyle := lipgloss.NewStyle().
-		Foreground(lipgloss.Color("#3E7B27")).Align(lipgloss.Left).Bold(true)
+		Foreground(lipgloss.Color("#DEFCF9")).Align(lipgloss.Left).Bold(true)
 	if m.activeTab == 0 {
+    m.CPUtable.Focus()
 		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).
 			Render(
-				activeTabContentStyle.Render(m.TabContent[m.activeTab]) + "\n\n" + m.table.View(),
+				activeTabContentStyle.Render(m.TabContent[m.activeTab]) + "\n\n" + m.CPUtable.View(),
 			))
 		doc.WriteString("\n")
-	} else {
+	} else if m .activeTab == 3 {
+    m.NetTabel.Focus()
+		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).
+			Render(
+				activeTabContentStyle.Render(m.TabContent[m.activeTab]) + "\n\n" + m.NetTabel.View(),
+			))
+  }else {
 		doc.WriteString(windowStyle.Width((lipgloss.Width(row) - windowStyle.GetHorizontalFrameSize())).
 			Render(activeTabContentStyle.Render(m.TabContent[m.activeTab])))
 	}
@@ -207,32 +315,41 @@ func main() {
 		{Title: "Usage (%)", Width: 20},
 		{Title: "Time (ms)", Width: 50},
 	}
-
+  
+  columns1 := []table.Column{
+    {Title: "Interface\t", Width: 10},
+    {Title: "State",Width: 10},
+    {Title: "Speed", Width: 10},
+    {Title: "RxBytes", Width: 15},
+    {Title: "TxBytes", Width: 15},
+    {Title: "RxErrors", Width: 10},
+    {Title: "TxErrors", Width: 10},
+  }
   styles := table.DefaultStyles()
   styles.Header = lipgloss.NewStyle().Align(lipgloss.Center)
   styles.Cell = lipgloss.NewStyle().Align(lipgloss.Center)
-  styles.Selected = lipgloss.NewStyle().Background(lipgloss.Color("#123524")).Bold(true).Align(lipgloss.Center).Foreground(lipgloss.Color("#EFE3C2"))
+  styles.Selected = lipgloss.NewStyle().Bold(true).Align(lipgloss.Center).Foreground(lipgloss.Color("#00ADB5"))
   t := table.New(
     table.WithColumns(columns),
-    table.WithFocused(true), // Ensure focus is disabled
     table.WithStyles(styles),// Apply the updated styles
   )
-	tabs := []string{"CPU", "Memory", "Running Tasks", "Disks", "Networks", "GPU", "General Info", "Power"}
+  t1 := table.New(
+    table.WithColumns(columns1),
+    table.WithStyles(styles),
+    )
+	tabs := []string{"CPU", "Memory", "Disks", "Networks","General Info"}
 	tabContent := []string{
 		"Loading CPU info...",
 		"Memory metrics...",
-		"Task metrics...",
 		"Disk metrics...",
 		"Network metrics...",
-		"GPU metrics...",
 		"General system info...",
-		"Power usage...",
 	}
-
 	m := model{
 		Tabs:       tabs,
 		TabContent: tabContent,
-		table:      t,
+		CPUtable:   t,
+    NetTabel:   t1, 
 	}
 
 	if _, err := tea.NewProgram(m).Run(); err != nil {
@@ -250,7 +367,8 @@ func renderBar(value, total float64, label string) string {
     x--
   }
 	bar := progressBarStyle.Render(strings.Repeat("█", int(percentage*20)) + strings.Repeat("░", 20-int(percentage*20)))
-	return fmt.Sprintf("%s\t[%s] %.2f%%\n", label, bar, percentage*100)
+  str := (fmt.Sprintf("%s\t%s %.2f%%\n", label, bar, percentage*100))
+	return progressBarStyle.Render(str)
 }
 func tabBorderWithBottom(left, middle, right string) lipgloss.Border {
 	border := lipgloss.RoundedBorder()
